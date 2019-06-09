@@ -149,7 +149,6 @@ static long int parse_lineno(char *str, char **endp, struct buffer *buf)
 	return buf->cur_line;
 }
 
-// TODO 1,10nn
 static int parse_command(struct buffer *buf, struct cmd *cmd)
 {
 	enum err e = E_NONE;
