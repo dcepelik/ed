@@ -1,3 +1,14 @@
+/*
+ * ed -- a simplified version of GNU ed
+ *
+ * This is a school assignment. It may be useful as a learning resource,
+ * but it's not production grade software.
+ *
+ * David Čepelík <d@dcepelik.cz> (c) 2019
+ *
+ * Distributed under the terms of the MIT License.
+ */
+
 #include <assert.h>
 #include <ctype.h>
 #include <err.h>
