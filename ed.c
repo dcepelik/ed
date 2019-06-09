@@ -10,8 +10,7 @@
 
 #define LINE_MAX_LEN 1024
 
-struct line
-{
+struct line {
 	char *text;
 	struct line *next;
 	struct line *prev;
@@ -38,8 +37,7 @@ static char *read_line(FILE *f)
 	return str;
 }
 
-enum err
-{
+enum err {
 	E_NONE,
 	E_BAD_ADDR,
 	E_BAD_CMD_SUFFIX,
@@ -47,8 +45,7 @@ enum err
 	E_CMD,
 };
 
-struct buffer
-{
+struct buffer {
 	struct line *first;
 	long int nlines;
 	long int cur_line;
@@ -110,8 +107,7 @@ static void xusage(int eval, char *fmt, ...)
 	exit(eval);
 }
 
-struct cmd
-{
+struct cmd {
 	char cmd;
 	long int a;
 	long int b;
@@ -191,7 +187,7 @@ out_err:
 }
 
 static void buffer_print_range(struct buffer *buf, long int a, long int b,
-	int with_line_numbers)
+			       int with_line_numbers)
 {
 	struct line *line;
 	for (line = buf->first; line != NULL; line = line->next) {
@@ -226,11 +222,8 @@ static const char *buf_err_str(enum err e)
 
 static int buffer_validate_addr(struct buffer *buf, struct cmd *cmd)
 {
-	return cmd->a <= cmd->b
-		&& cmd->a >= 1
-		&& cmd->a <= buf->nlines
-		&& cmd->b >= 1
-		&& cmd->b <= buf->nlines;
+	return cmd->a <= cmd->b && cmd->a >= 1 && cmd->a <= buf->nlines &&
+	       cmd->b >= 1 && cmd->b <= buf->nlines;
 }
 
 int main(int argc, const char *argv[])
@@ -267,7 +260,8 @@ int main(int argc, const char *argv[])
 			err = err2;
 			goto skip_cmd;
 		}
-		if ((cmd.addr_given || cmd.cmd == '\n') && !buffer_validate_addr(&buf, &cmd)) {
+		if ((cmd.addr_given || cmd.cmd == '\n') &&
+		    !buffer_validate_addr(&buf, &cmd)) {
 			err = E_BAD_ADDR;
 			goto skip_cmd;
 		}
@@ -318,10 +312,10 @@ int main(int argc, const char *argv[])
 			break;
 		default:
 			err = E_CMD;
-		}	
+		}
 		if (err == E_NONE && err2 != E_NONE)
 			err = err2; // Just a hack to satisfy the assignment.
-skip_cmd:
+	skip_cmd:
 		if (err != E_NONE) {
 			puts("?");
 			if (buf.print_errors)

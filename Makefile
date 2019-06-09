@@ -1,4 +1,4 @@
-.PHONY: clean test
+.PHONY: clean test fmt
 
 PROG := ed
 
@@ -12,3 +12,6 @@ clean:
 
 test: $(PROG)
 	cd tests; ./run
+
+fmt:
+	clang-format -i ed.c
