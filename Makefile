@@ -1,4 +1,4 @@
-.PHONY: clean
+.PHONY: clean test
 
 PROG := ed
 
@@ -9,3 +9,6 @@ $(PROG): $(PROG).c Makefile
 
 clean:
 	rm -f -- $(PROG) vgcore.*
+
+test: $(PROG)
+	cd tests; ./run
