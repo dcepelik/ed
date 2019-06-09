@@ -1,0 +1,23 @@
+#!/bin/bash
+set -u -o pipefail
+
+find . -mindepth 1 -type d -print0 | while IFS= read -r -d $'\0' test; do
+	echo -n $test;
+	$(cat "$test/run") < "$test/stdin" > last.stdout 2> last.stderr || true
+	diff last.stdout "$test/stdout" >/dev/null || echo -n " !stdout"
+	diff last.stderr "$test/stderr" >/dev/null || echo -n " !stderr"
+	valgrind --error-exitcode=3 \
+		--leak-check=full \
+		$(cat "$test/run") \
+		< "$test/stdin" \
+		> last.stdout \
+		>/dev/null 2>&1
+	[ "$?" -ne 3 ] || echo -n " !vg"
+	echo
+done
+
+cleanup() {
+	rm -f -- last.*
+}
+
+#trap cleanup EXIT

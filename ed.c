@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 #define LINE_MAX_LEN 1024
 
@@ -54,6 +55,14 @@ struct buffer
 	int print_errors;
 };
 
+static void buffer_init(struct buffer *b)
+{
+	b->first = NULL;
+	b->nlines = 0;
+	b->cur_line = 0;
+	b->print_errors = 0;
+}
+
 static void buffer_init_load(struct buffer *b, FILE *f)
 {
 	size_t l = 0;
@@ -80,6 +89,17 @@ static void buffer_init_load(struct buffer *b, FILE *f)
 	b->print_errors = 0;
 }
 
+static void buffer_free(struct buffer *buf)
+{
+	struct line *line = buf->first, *prev;
+	while (line) {
+		free(line->text);
+		prev = line;
+		line = line->next;
+		free(prev);
+	}
+}
+
 static void xusage(int eval, char *fmt, ...)
 {
 	va_list va;
@@ -100,6 +120,10 @@ struct cmd
 
 static long int parse_lineno(char *str, char **endp, struct buffer *buf)
 {
+	if (*str != '-' && !isdigit(*str) && *str != '.' && *str != '$') {
+		*endp = str;
+		return 0;
+	}
 	long int n = strtol(str, endp, 10);
 	if (*endp != str) {
 		if (n < 0)
@@ -121,40 +145,49 @@ static long int parse_lineno(char *str, char **endp, struct buffer *buf)
 // TODO 1,10nn
 static int parse_command(struct buffer *buf, struct cmd *cmd)
 {
+	enum err e = E_NONE;
 	cmd->b = 0;
 	cmd->addr_given = 0;
-	char *str = read_line(stdin);
-	//size_t l = strlen(str);
+	char *str = read_line(stdin), *ostr = str;
+	if (!str) {
+		cmd->cmd = 'q';
+		cmd->addr_given = 0;
+		return E_NONE;
+	}
+	if (*str == ' ') {
+		e = E_BAD_ADDR;
+		goto out_err;
+	}
 	char *endp;
+	int have_comma = (index(str, ',') != NULL);
 	cmd->a = parse_lineno(str, &endp, buf);
 	if (endp != str) {
 		str = endp;
 		if (*str == ',') {
 			str++;
 			cmd->b = parse_lineno(str, &endp, buf);
-			if (endp == str)
-				return E_BAD_ADDR;
+			if (endp == str) {
+				e = E_BAD_ADDR;
+				goto out_err;
+			}
 			str = endp;
+		} else if (have_comma) {
+			e = E_BAD_ADDR;
+			goto out_err;
 		} else {
 			cmd->b = cmd->a;
 		}
 		cmd->addr_given = 1;
+	} else if (have_comma) {
+		e = E_BAD_ADDR;
+		goto out_err;
 	}
 	cmd->cmd = *str++;
-	switch (cmd->cmd) {
-	case '\n':
-	case 'n':
-	case 'p':
-	case 'h':
-	case 'H':
-	case 'q':
-		break;
-	default:
-		return E_CMD;
-	}
 	if (*str != '\0' && *str != '\n')
-		return E_BAD_CMD_SUFFIX;
-	return E_NONE;
+		e = E_BAD_CMD_SUFFIX;
+out_err:
+	free(ostr);
+	return e;
 }
 
 static void buffer_print_range(struct buffer *buf, long int a, long int b,
@@ -181,7 +214,7 @@ static const char *buf_err_str(enum err e)
 	case E_BAD_ADDR:
 		return "Invalid address";
 	case E_BAD_CMD_SUFFIX:
-		return "Unknown command suffix";
+		return "Invalid command suffix";
 	case E_UNEXP_ADDR:
 		return "Unexpected address";
 	case E_CMD:
@@ -205,30 +238,53 @@ int main(int argc, const char *argv[])
 	if (argc != 2)
 		xusage(1, "");
 	const char *fname = argv[1];
-	if (fname[0] == '-' && fname[1] != '\0')
-		xusage(1, "illegal option -- %s\n", fname + 1);
+	if (fname[0] == '-')
+		xusage(1, "ed: illegal option -- %s\n", fname + 1);
+
+	struct buffer buf;
 	FILE *f = fopen(fname, "r");
 	if (!f) {
 		perror(fname);
-		exit(1);
+		buffer_init(&buf);
+	} else {
+		buffer_init_load(&buf, f);
+		fseek(f, 0, SEEK_END);
+		printf("%lu\n", ftell(f));
+		fclose(f);
 	}
-	struct buffer buf;
-	buffer_init_load(&buf, f);
 
 	struct cmd cmd;
-	enum err err, last_err = E_NONE;
+	enum err err = E_NONE, err2, last_err = E_NONE;
 	for (;;) {
-		err = parse_command(&buf, &cmd);
-		if (err != E_NONE)
-			goto skip_cmd;
+		err2 = parse_command(&buf, &cmd);
 		if (!cmd.addr_given) {
 			if (cmd.cmd == '\n')
 				cmd.a = cmd.b = buf.cur_line + 1;
 			else
 				cmd.a = cmd.b = buf.cur_line;
 		}
-		if (!buffer_validate_addr(&buf, &cmd)) {
+		if (err2 != E_NONE && err2 != E_BAD_CMD_SUFFIX) {
+			err = err2;
+			goto skip_cmd;
+		}
+		if ((cmd.addr_given || cmd.cmd == '\n') && !buffer_validate_addr(&buf, &cmd)) {
 			err = E_BAD_ADDR;
+			goto skip_cmd;
+		}
+		switch (cmd.cmd) {
+		case '\n':
+		case 'n':
+		case 'p':
+		case 'H':
+		case 'h':
+		case 'q':
+			break;
+		default:
+			err = E_CMD;
+			goto skip_cmd;
+		}
+		if (err2 == E_BAD_CMD_SUFFIX) {
+			err = err2;
 			goto skip_cmd;
 		}
 		switch (cmd.cmd) {
@@ -245,6 +301,7 @@ int main(int argc, const char *argv[])
 				buf.print_errors = !buf.print_errors;
 				if (buf.print_errors && last_err != E_NONE)
 					puts(buf_err_str(last_err));
+				continue;
 			}
 			break;
 		case 'h':
@@ -252,12 +309,18 @@ int main(int argc, const char *argv[])
 				err = E_UNEXP_ADDR;
 			else if (last_err != E_NONE)
 				puts(buf_err_str(last_err));
-			break; // TODO GCC BUG
+			continue;
 		case 'q':
-			goto quit;
+			if (cmd.addr_given)
+				err = E_UNEXP_ADDR;
+			else
+				goto quit;
+			break;
 		default:
 			err = E_CMD;
 		}	
+		if (err == E_NONE && err2 != E_NONE)
+			err = err2; // Just a hack to satisfy the assignment.
 skip_cmd:
 		if (err != E_NONE) {
 			puts("?");
@@ -267,5 +330,6 @@ skip_cmd:
 		}
 	}
 quit:
-	return err == E_NONE ? 0 : 1;
+	buffer_free(&buf);
+	return last_err == E_NONE ? 0 : 1;
 }
