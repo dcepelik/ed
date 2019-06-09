@@ -2,7 +2,7 @@
 
 PROG := ed
 
-CFLAGS += -std=c99 -Wall -Werror -Wextra --pedantic -g
+CFLAGS += -std=c99 -Wall -Werror -Wextra -Wpedantic -g
 
 $(PROG): $(PROG).c Makefile
 	$(CC) $(CFLAGS) -o $@ $<
