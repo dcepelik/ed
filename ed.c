@@ -9,6 +9,7 @@
  * Distributed under the terms of the MIT License.
  */
 
+#include <errno.h>
 #include <assert.h>
 #include <ctype.h>
 #include <err.h>
@@ -54,6 +55,7 @@ enum err {
 	E_BAD_CMD_SUFFIX,
 	E_UNEXP_ADDR,
 	E_CMD,
+	E_INPUT,
 };
 
 struct buffer {
@@ -225,6 +227,8 @@ static const char *buf_err_str(enum err e)
 		return "Unexpected address";
 	case E_CMD:
 		return "Unknown command";
+	case E_INPUT:
+		return "Cannot open input file";
 	default:
 		assert(0);
 	}
@@ -238,6 +242,7 @@ static int buffer_validate_addr(struct buffer *buf, struct cmd *cmd)
 
 int main(int argc, const char *argv[])
 {
+	enum err err = E_NONE, err2, last_err = E_NONE;
 	if (argc != 2)
 		xusage(1, "");
 	const char *fname = argv[1];
@@ -247,8 +252,9 @@ int main(int argc, const char *argv[])
 	struct buffer buf;
 	FILE *f = fopen(fname, "r");
 	if (!f) {
-		perror(fname);
+		fprintf(stderr, "%s: %s\n", fname, strerror(errno));
 		buffer_init(&buf);
+		last_err = E_INPUT;
 	} else {
 		buffer_init_load(&buf, f);
 		fseek(f, 0, SEEK_END);
@@ -257,7 +263,6 @@ int main(int argc, const char *argv[])
 	}
 
 	struct cmd cmd;
-	enum err err = E_NONE, err2, last_err = E_NONE;
 	for (;;) {
 		err2 = parse_command(&buf, &cmd);
 		if (!cmd.addr_given) {
@@ -297,6 +302,7 @@ int main(int argc, const char *argv[])
 		case 'p':
 			buffer_print_range(&buf, cmd.a, cmd.b, cmd.cmd == 'n');
 			buf.cur_line = cmd.b;
+			err = E_NONE;
 			break;
 		case 'H':
 			if (cmd.addr_given) {
@@ -309,8 +315,10 @@ int main(int argc, const char *argv[])
 			}
 			break;
 		case 'h':
-			if (cmd.addr_given)
+			if (cmd.addr_given) {
 				err = E_UNEXP_ADDR;
+				break;
+			}
 			else if (last_err != E_NONE)
 				puts(buf_err_str(last_err));
 			continue;
@@ -335,5 +343,5 @@ int main(int argc, const char *argv[])
 	}
 quit:
 	buffer_free(&buf);
-	return last_err == E_NONE ? 0 : 1;
+	return last_err == E_NONE || last_err == E_INPUT ? 0 : 1;
 }
