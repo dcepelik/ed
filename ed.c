@@ -26,7 +26,6 @@ struct line {
 	char *text;
 	struct line *next;
 	struct line *prev;
-	long int line_no;
 };
 
 static char *read_line(FILE *f)
@@ -56,6 +55,9 @@ enum err {
 	E_UNEXP_ADDR,
 	E_CMD,
 	E_INPUT,
+	E_NO_FN,
+	E_BAD_OF,
+	E_BUF_MODIFIED,
 };
 
 struct buffer {
@@ -63,14 +65,16 @@ struct buffer {
 	long int nlines;
 	long int cur_line;
 	int print_errors;
+	int changed;
 };
 
 static void buffer_init(struct buffer *b)
 {
 	b->first = NULL;
 	b->nlines = 0;
-	b->cur_line = 0;
+	b->cur_line = 1;
 	b->print_errors = 0;
+	b->changed = 0;
 }
 
 static void buffer_init_load(struct buffer *b, FILE *f)
@@ -92,11 +96,11 @@ static void buffer_init_load(struct buffer *b, FILE *f)
 		prev = l;
 		l->next = NULL;
 		b->nlines++;
-		l->line_no = b->nlines;
 	}
 	b->first = first;
 	b->cur_line = b->nlines;
 	b->print_errors = 0;
+	b->changed = 0;
 }
 
 static void buffer_free(struct buffer *buf)
@@ -115,7 +119,7 @@ static void xusage(int eval, char *fmt, ...)
 	va_list va;
 	va_start(va, fmt);
 	vfprintf(stderr, fmt, va);
-	fprintf(stderr, "usage: ed file\n");
+	fprintf(stderr, "usage: ed [file]\n");
 	va_end(va);
 	exit(eval);
 }
@@ -125,6 +129,7 @@ struct cmd {
 	long int a;
 	long int b;
 	int addr_given;
+	char *fname;
 };
 
 static long int parse_lineno(char *str, char **endp, struct buffer *buf)
@@ -156,8 +161,9 @@ static int parse_command(struct buffer *buf, struct cmd *cmd)
 	enum err e = E_NONE;
 	cmd->b = 0;
 	cmd->addr_given = 0;
+	cmd->fname = NULL;
 	char *str = read_line(stdin), *ostr = str;
-	if (!str) {
+	if (!str) { /* <=> EOF reached on stdin */
 		cmd->cmd = 'q';
 		cmd->addr_given = 0;
 		return E_NONE;
@@ -165,6 +171,21 @@ static int parse_command(struct buffer *buf, struct cmd *cmd)
 	if (*str == ' ') {
 		e = E_BAD_ADDR;
 		goto out_err;
+	}
+	if (*str == 'w') {
+		cmd->cmd = 'w';
+		if (str[1] != ' ' && str[1] != '\n') {
+			e = E_BAD_CMD_SUFFIX;
+			goto out_err;
+		}
+		if (str[1] == ' ' && str[2] != '\n') {
+			size_t len = strlen(str + 2);
+			cmd->fname = malloc(len + 1);
+			strncpy(cmd->fname, str + 2, len + 1);
+			assert(cmd->fname[len - 1] == '\n');
+			cmd->fname[len - 1] = '\0';
+		}
+		return E_NONE;
 	}
 	char *endp;
 	int have_comma = (index(str, ',') != NULL);
@@ -202,16 +223,84 @@ static void buffer_print_range(struct buffer *buf, long int a, long int b,
 			       int with_line_numbers)
 {
 	struct line *line;
-	for (line = buf->first; line != NULL; line = line->next) {
-		if (line->line_no > b)
+	long int line_no = 1;
+	for (line = buf->first; line != NULL; line = line->next, line_no++) {
+		if (line_no > b)
 			break;
-		if (line->line_no < a)
+		if (line_no < a)
 			continue;
 		if (with_line_numbers)
-			printf("%li\t%s", line->line_no, line->text);
+			printf("%li\t%s", line_no, line->text);
 		else
 			printf("%s", line->text);
 	}
+}
+
+static void buffer_cut_range(struct buffer *buf, long int a, long int b)
+{
+	struct line *cur, *next = NULL;
+	long int line_no = 1;
+	for (cur = buf->first; cur != NULL; cur = next, line_no++) {
+		next = cur->next;
+		if (line_no > b)
+			break;
+		if (line_no < a)
+			continue;
+		if (cur->prev)
+			cur->prev->next = next;
+		else
+			buf->first = next;
+		if (next)
+			next->prev = cur->prev;
+		buf->nlines--;
+		buf->changed = 1;
+		free(cur->text);
+		free(cur);
+	}
+}
+
+static void buffer_insert(struct buffer *buf, long int before, struct line *l)
+{
+	struct line *line, *last = NULL;
+	long int line_no = 1;
+	for (line = buf->first; line != NULL; line = line->next, line_no++) {
+		last = line;
+		if (line_no == before)
+			break;
+	}
+	if (line && line_no == before && buf->nlines != 0)
+		line = line->prev;
+	else
+		line = last;
+	if (line) {
+		if (line->next)
+			line->next->prev = l;
+		l->next = line->next;
+		l->prev = line;
+		line->next = l;
+	} else {
+		/* TODO Using a list with a head, we wouldn't need this branch. */
+		l->next = buf->first;
+		if (buf->first)
+			buf->first->prev = l;
+		buf->first = l;
+	}
+	buf->nlines++;
+	buf->changed = 1;
+}
+
+static enum err buf_write(struct buffer *buf, const char *fname)
+{
+	FILE *f = fopen(fname, "w");
+	if (!f) {
+		fprintf(stderr, "%s: %s\n", fname, strerror(errno));
+		return E_BAD_OF;
+	}
+	for (struct line *l = buf->first; l != NULL; l = l->next)
+		fprintf(f, "%s", l->text);
+	fclose(f);
+	buf->changed = 0;
+	return E_NONE;
 }
 
 static const char *buf_err_str(enum err e)
@@ -229,6 +318,12 @@ static const char *buf_err_str(enum err e)
 		return "Unknown command";
 	case E_INPUT:
 		return "Cannot open input file";
+	case E_NO_FN:
+		return "No current filename";
+	case E_BAD_OF:
+		return "Cannot open output file";
+	case E_BUF_MODIFIED:
+		return "Warning: buffer modified";
 	default:
 		assert(0);
 	}
@@ -243,26 +338,37 @@ static int buffer_validate_addr(struct buffer *buf, struct cmd *cmd)
 int main(int argc, const char *argv[])
 {
 	enum err err = E_NONE, err2, last_err = E_NONE;
-	if (argc != 2)
+	if (argc > 2)
 		xusage(1, "");
-	const char *fname = argv[1];
-	if (fname[0] == '-')
-		xusage(1, "ed: illegal option -- %s\n", fname + 1);
+
+	const char *fname = NULL;
+	if (argc == 2) {
+		fname = argv[1];
+		if (fname[0] == '-')
+			xusage(1, "ed: illegal option -- %s\n", fname + 1);
+	}
 
 	struct buffer buf;
-	FILE *f = fopen(fname, "r");
-	if (!f) {
-		fprintf(stderr, "%s: %s\n", fname, strerror(errno));
-		buffer_init(&buf);
-		last_err = E_INPUT;
+	if (fname) {
+		FILE *f = fopen(fname, "r");
+		if (!f) {
+			fprintf(stderr, "%s: %s\n", fname, strerror(errno));
+			buffer_init(&buf);
+			last_err = E_INPUT;
+		} else {
+			buffer_init_load(&buf, f);
+			fseek(f, 0, SEEK_END);
+			printf("%lu\n", ftell(f));
+			fclose(f);
+		}
 	} else {
-		buffer_init_load(&buf, f);
-		fseek(f, 0, SEEK_END);
-		printf("%lu\n", ftell(f));
-		fclose(f);
+		buffer_init(&buf);
 	}
 
 	struct cmd cmd;
+	int prev_was_q = 0;
+	long int before;
+	char *ofname;
 	for (;;) {
 		err2 = parse_command(&buf, &cmd);
 		if (!cmd.addr_given) {
@@ -275,8 +381,8 @@ int main(int argc, const char *argv[])
 			err = err2;
 			goto skip_cmd;
 		}
-		if ((cmd.addr_given || cmd.cmd == '\n') &&
-		    !buffer_validate_addr(&buf, &cmd)) {
+		if ((cmd.addr_given || cmd.cmd == '\n')
+			&& !buffer_validate_addr(&buf, &cmd)) {
 			err = E_BAD_ADDR;
 			goto skip_cmd;
 		}
@@ -287,6 +393,9 @@ int main(int argc, const char *argv[])
 		case 'H':
 		case 'h':
 		case 'q':
+		case 'i':
+		case 'd':
+		case 'w':
 			break;
 		default:
 			err = E_CMD;
@@ -311,6 +420,7 @@ int main(int argc, const char *argv[])
 				buf.print_errors = !buf.print_errors;
 				if (buf.print_errors && last_err != E_NONE)
 					puts(buf_err_str(last_err));
+				prev_was_q = 0;
 				continue;
 			}
 			break;
@@ -321,16 +431,59 @@ int main(int argc, const char *argv[])
 			}
 			else if (last_err != E_NONE)
 				puts(buf_err_str(last_err));
+			prev_was_q = 0;
 			continue;
 		case 'q':
 			if (cmd.addr_given)
 				err = E_UNEXP_ADDR;
+			else if (buf.changed && !prev_was_q)
+				err = E_BUF_MODIFIED;
 			else
 				goto quit;
+			break;
+		case 'd':
+			buffer_cut_range(&buf, cmd.a, cmd.b);
+			if (cmd.a <= buf.nlines)
+				buf.cur_line = cmd.a;
+			else
+				buf.cur_line = buf.nlines;
+			if (!buf.cur_line)
+				buf.cur_line = 1;
+			err = E_NONE;
+			break;
+		case 'i':
+			before = cmd.a;
+			while (1) {
+				char *input = read_line(stdin);
+				if (strcmp(input, ".\n") == 0) {
+					free(input);
+					break;
+				}
+				struct line *l = malloc(sizeof(*l));
+				l->next = l->prev = NULL;
+				l->text = input;
+				buffer_insert(&buf, before, l);
+				before++;
+			}
+			buf.cur_line = cmd.a;
+			err = E_NONE;
+			break;
+		case 'w':
+			ofname = cmd.fname;
+			if (!ofname)
+				ofname = (char *)fname;
+			if (!ofname) {
+				err = E_NO_FN;
+				break;
+			}
+			err = buf_write(&buf, ofname);
+			if (cmd.fname)
+				free(cmd.fname);
 			break;
 		default:
 			err = E_CMD;
 		}
+		prev_was_q = (cmd.cmd == 'q');
 		if (err == E_NONE && err2 != E_NONE)
 			err = err2; // Just a hack to satisfy the assignment.
 	skip_cmd:
