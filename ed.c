@@ -52,6 +52,7 @@ enum err {
 	E_NONE,
 	E_BAD_ADDR,
 	E_BAD_CMD_SUFFIX,
+	E_UNEXP_CMD_SUFFIX,
 	E_UNEXP_ADDR,
 	E_CMD,
 	E_INPUT,
@@ -175,7 +176,7 @@ static int parse_command(struct buffer *buf, struct cmd *cmd)
 	if (*str == 'w') {
 		cmd->cmd = 'w';
 		if (str[1] != ' ' && str[1] != '\n') {
-			e = E_BAD_CMD_SUFFIX;
+			e = E_UNEXP_CMD_SUFFIX;
 			goto out_err;
 		}
 		if (str[1] == ' ' && str[2] != '\n') {
@@ -314,6 +315,8 @@ static const char *buf_err_str(enum err e)
 		return "Invalid address";
 	case E_BAD_CMD_SUFFIX:
 		return "Invalid command suffix";
+	case E_UNEXP_CMD_SUFFIX:
+		return "Unexpected command suffix";
 	case E_UNEXP_ADDR:
 		return "Unexpected address";
 	case E_CMD:
@@ -333,17 +336,21 @@ static const char *buf_err_str(enum err e)
 
 static int buffer_validate_addr(struct buffer *buf, struct cmd *cmd)
 {
-	return cmd->a <= cmd->b && cmd->a >= 1 && cmd->a <= buf->nlines &&
-	       cmd->b >= 1 && cmd->b <= buf->nlines;
+	long int addr_min = 1;
+	if (cmd->cmd == 'i')
+		addr_min = 0;
+	return cmd->a <= cmd->b && cmd->a >= addr_min && cmd->a <= buf->nlines &&
+	       cmd->b >= addr_min && cmd->b <= buf->nlines;
 }
 
-int main(int argc, const char *argv[])
+int main(int argc, char *argv[])
 {
 	enum err err = E_NONE, err2, last_err = E_NONE;
 	if (argc > 2)
 		xusage(1, "");
 
-	const char *fname = NULL;
+	char *fname = NULL;
+	int fname_needs_free = 0;
 	if (argc == 2) {
 		fname = argv[1];
 		if (fname[0] == '-')
@@ -455,6 +462,8 @@ int main(int argc, const char *argv[])
 			break;
 		case 'i':
 			before = cmd.a;
+			if (before == 0)
+				before = 1;
 			while (1) {
 				char *input = read_line(stdin);
 				if (strcmp(input, ".\n") == 0) {
@@ -468,6 +477,8 @@ int main(int argc, const char *argv[])
 				before++;
 			}
 			buf.cur_line = cmd.a;
+			if (before - cmd.a > 1)
+				buf.cur_line += before - cmd.a - 1;
 			err = E_NONE;
 			break;
 		case 'w':
@@ -477,6 +488,11 @@ int main(int argc, const char *argv[])
 			if (!ofname) {
 				err = E_NO_FN;
 				break;
+			}
+			if (!fname) {
+				fname = malloc(sizeof(ofname) + 1);
+				strcpy(fname, ofname);
+				fname_needs_free = 1;
 			}
 			err = buf_write(&buf, ofname);
 			if (cmd.fname)
@@ -498,5 +514,7 @@ int main(int argc, const char *argv[])
 	}
 quit:
 	buffer_free(&buf);
+	if (fname_needs_free)
+		free(fname);
 	return last_err == E_NONE || last_err == E_INPUT ? 0 : 1;
 }
