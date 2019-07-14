@@ -339,8 +339,9 @@ static int buffer_validate_addr(struct buffer *buf, struct cmd *cmd)
 	long int addr_min = 1;
 	if (cmd->cmd == 'i')
 		addr_min = 0;
-	return cmd->a <= cmd->b && cmd->a >= addr_min && cmd->a <= buf->nlines &&
-	       cmd->b >= addr_min && cmd->b <= buf->nlines;
+	return cmd->a <= cmd->b && cmd->a >= addr_min &&
+	       cmd->a <= buf->nlines && cmd->b >= addr_min &&
+	       cmd->b <= buf->nlines;
 }
 
 int main(int argc, char *argv[])
@@ -390,8 +391,8 @@ int main(int argc, char *argv[])
 			err = err2;
 			goto skip_cmd;
 		}
-		if ((cmd.addr_given || cmd.cmd == '\n')
-			&& !buffer_validate_addr(&buf, &cmd)) {
+		if ((cmd.addr_given || cmd.cmd == '\n') &&
+		    !buffer_validate_addr(&buf, &cmd)) {
 			err = E_BAD_ADDR;
 			goto skip_cmd;
 		}
@@ -437,8 +438,7 @@ int main(int argc, char *argv[])
 			if (cmd.addr_given) {
 				err = E_UNEXP_ADDR;
 				break;
-			}
-			else if (last_err != E_NONE)
+			} else if (last_err != E_NONE)
 				puts(buf_err_str(last_err));
 			prev_was_q = 0;
 			continue;
