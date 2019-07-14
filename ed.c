@@ -292,14 +292,16 @@ static void buffer_insert(struct buffer *buf, long int before, struct line *l)
 static enum err buf_write(struct buffer *buf, const char *fname)
 {
 	FILE *f = fopen(fname, "w");
+	size_t written = 0;
 	if (!f) {
 		fprintf(stderr, "%s: %s\n", fname, strerror(errno));
 		return E_BAD_OF;
 	}
 	for (struct line *l = buf->first; l != NULL; l = l->next)
-		fprintf(f, "%s", l->text);
+		written += (size_t)fprintf(f, "%s", l->text);
 	fclose(f);
 	buf->changed = 0;
+	printf("%lu\n", written);
 	return E_NONE;
 }
 
